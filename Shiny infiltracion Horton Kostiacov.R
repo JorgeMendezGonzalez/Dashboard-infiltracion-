@@ -8,7 +8,7 @@ library(nlstools)
 
 # Definir la interfaz de usuario
 ui <- dashboardPage(
-  dashboardHeader(title = "Dibujo de Cilindro 3D"),
+  dashboardHeader(title = "D-JMG"),
   dashboardSidebar(
     sidebarMenu(
       menuItem("Cilindro", tabName = "cilindro", icon = icon("cylinder")),
@@ -30,10 +30,14 @@ ui <- dashboardPage(
         .sliderInput .irs-slider {
           background-color: green;
         }
+        .estimacion {
+          color: green;
+          font-size: 16px; /* Tamaño de fuente ajustado */
+        }
       "))
     ),
     fluidRow(
-      column(12, align = "center", h4("Elaborado por: Jorge Méndez Gonzalez | UAAAN | oct 2024 | Simulación de infiltración"))
+      column(12, align = "center", h4("Simulación de infiltración"))
     ),
     tabItems(
       tabItem(tabName = "cilindro",
@@ -42,15 +46,19 @@ ui <- dashboardPage(
                 box(width = 4,
                     h4("Dimensiones del Cilindro"),
                     sliderInput("alturaCilindro", "Altura del Cilindro (cm):", 
-                                min = 10, max = 100, value = 30),
+                                min = 10, max = 200, value = 30),
                     sliderInput("radioCilindro", "Radio del Cilindro (cm):", 
                                 min = 5, max = 50, value = 20),
                     h4("Altura del Líquido"),
                     sliderInput("alturaLiquido", "Altura del Líquido (cm):", 
-                                min = 0, max = 30, value = 25),
+                                min = 0, max = 200, value = 25),
                     h4("Color del Líquido"),
                     selectInput("colorLiquido", "Selecciona el color del líquido:",
                                 choices = c("LightBlue" = "lightblue", "Blue" = "blue", "Green" = "green", "Red" = "red")),
+                    h4("Rellenar el Cilindro"),
+                    sliderInput("cantidadRelleno", "Cantidad a Rellenar (cm):", 
+                                min = 0, max = 30, value = 5),
+                    actionButton("applyRelleno", "Aplicar Relleno"),
                     h4("Intervalo de Tiempo (min):"),
                     sliderInput("intervaloTiempo", "Selecciona el intervalo (min):", 
                                 min = 1, max = 30, value = 1),
@@ -86,9 +94,13 @@ ui <- dashboardPage(
                     numericInput("tiempoManual", "Ingresa el Tiempo (min) para hacer estimaciones con el modelo:", value = 1, min = 0),  
                     actionButton("ajustar_modelos", "Ajustar Modelo"),
                     verbatimTextOutput("summary_modelo"),
+                    verbatimTextOutput("coeficientes_modelo"),  # Nuevo output para coeficientes
+                    verbatimTextOutput("interpretacion_coeficientes"),  # Nuevo output para interpretación
                     plotlyOutput("plot_modelo"),  
                     tableOutput("resultados_modelos"),
-                    verbatimTextOutput("estimacion_manual"),
+                    textOutput("estimacion_personalizada", container = function(...) {
+                      tags$span(class = "estimacion", ...)
+                    }),  # Nuevo output para estimación personalizada
                     tableOutput("tabla_observados_estimados")  # Nueva tabla para observados y estimados
                 )
               )
@@ -105,6 +117,7 @@ ui <- dashboardPage(
                         tags$li("Dimensiones del Cilindro: Ajusta la altura y el radio."),
                         tags$li("Altura del Líquido: Establece la altura inicial del líquido."),
                         tags$li("Color del Líquido: Selecciona el color del líquido."),
+                        tags$li("Rellenar el Cilindro: Selecciona la cantidad a rellenar."),
                         tags$li("Intervalo de Tiempo: Selecciona el intervalo de tiempo para el cálculo."),
                         tags$li("Baja del Agua: Simula una disminución en milímetros."),
                         tags$li("Tabla de Historial: Muestra un registro de los cambios.")
@@ -112,6 +125,11 @@ ui <- dashboardPage(
                       tags$li(h4("Gráfica de Dispersión:")),
                       tags$ul(
                         tags$li("Representa los eventos y sus correspondientes velocidades de infiltración.")
+                      ),
+                      tags$li(h4("Ajuste de Modelos:")),
+                      tags$ul(
+                        tags$li("Permite ajustar modelos de infiltración (Horton y Kostiakov) a los datos observados."),
+                        tags$li("Muestra los coeficientes del modelo ajustado junto con su interpretación.")
                       )
                     ),
                     h4("Uso General"),
@@ -193,6 +211,16 @@ server <- function(input, output, session) {
     alturaLiquido(input$alturaLiquido)
   })
   
+  # Observador para aplicar el relleno del agua
+  observeEvent(input$applyRelleno, {
+    cantidadRelleno <- input$cantidadRelleno
+    nueva_altura <- alturaLiquido() + cantidadRelleno
+    alturaLiquido(nueva_altura)
+    
+    # Cambiar el color del líquido al rellenar
+    updateSelectInput(session, "colorLiquido", selected = sample(c("lightblue", "blue", "green", "red"), 1))  # Cambia a un color diferente al rellenar
+  })
+  
   # Observador para aplicar la baja del agua
   observeEvent(input$applyDecrease,{
     disminucion_cm <- input$bajaAgua /10
@@ -226,6 +254,7 @@ server <- function(input, output, session) {
       "Velocidad de Infiltración (cm/hr)"=numeric(0),
       "Estimacion_Modelo"=numeric(0)  
     ))
+    updateSelectInput(session, "colorLiquido", selected = "lightblue")  # Reiniciar color del líquido
   })
   
   # Tabla de historial de alturas
@@ -267,9 +296,11 @@ server <- function(input, output, session) {
     if(nrow(datos)==0){
       output$resultados_modelos<- renderTable({data.frame ("No hay datos para ajustar modelos")})
       output$summary_modelo<- renderPrint({"No hay datos para ajustar modelos."})
+      output$coeficientes_modelo <- renderPrint({"No hay datos para ajustar modelos."})  # Nuevo output vacío
+      output$interpretacion_coeficientes <- renderPrint({"No hay datos para ajustar modelos."})  # Nuevo output vacío
       output$plot_modelo<- renderPlotly({NULL})  
-      output$estimacion_manual<- renderPrint({"No hay datos para estimar."})  
       output$tabla_observados_estimados <- renderTable({data.frame("No hay datos para mostrar")})  # Nueva tabla vacía
+      output$estimacion_personalizada <- renderText({"No hay estimación disponible."})  # Nuevo output vacío
       return()
     }
     
@@ -280,6 +311,7 @@ server <- function(input, output, session) {
     summary_modelo <- NULL
     estimaciones <- NULL
     coeficientes <- NULL
+    interpretaciones <- NULL
     
     # Función para ajustar el modelo seleccionado
     fit_model_horton <- function(formula, start) {
@@ -288,6 +320,11 @@ server <- function(input, output, session) {
         summary_modelo <<- summary(model)
         estimaciones <<- data.frame(Tiempo = datos$Tiempo.acumulado..min., Estimado = predict(model))
         coeficientes <<- coef(model)  
+        interpretaciones <<- c(
+          paste("a (capacidad máxima):", coeficientes['a']),
+          paste("b (tasa de disminución):", coeficientes['b']),
+          paste("c (velocidad mínima):", coeficientes['c'])
+        )
         resultados <<- rbind(resultados, data.frame(Modelo = "Horton",
                                                     Coeficiente = list(coef(model)), 
                                                     R2 = summary(model)$r.squared))
@@ -306,6 +343,7 @@ server <- function(input, output, session) {
       })
     }
     
+    
     fit_model_kostiakov <- function() {
       formulaKost <- as.formula(Velocidad.de.Infiltración..cm.hr. ~ a * Tiempo.acumulado..min.^b)
       tryCatch({
@@ -313,6 +351,10 @@ server <- function(input, output, session) {
         summary_modelo <<- summary(model)
         estimaciones <<- data.frame(Tiempo = datos$Tiempo.acumulado..min., Estimado = predict(model))
         coeficientes <<- coef(model)  
+        interpretaciones <<- c(
+          paste("a (capacidad máxima):", coeficientes['a']),
+          paste("b (exponente):", coeficientes['b'])
+        )
         resultados <<- rbind(resultados, data.frame(Modelo = "Kostiakov",
                                                     Coeficiente = list(coef(model)), 
                                                     R2 = summary(model)$r.squared))
@@ -338,78 +380,67 @@ server <- function(input, output, session) {
       fit_model_kostiakov()
     }
     
-    # Mostrar resultados
+    # Renderizar resultados
     output$resultados_modelos <- renderTable({
       resultados
     })
     
-    # Mostrar resumen del modelo ajustado
     output$summary_modelo <- renderPrint({
       if (!is.null(summary_modelo)) {
-        summary_modelo
-      } else {
-        "No se pudo ajustar el modelo."
+        print(summary_modelo)
       }
     })
     
-    # Graficar los datos observados y estimados
-    output$plot_modelo <- renderPlotly({
-      plot_ly() %>%
-        add_trace(data = datos, x = ~Tiempo.acumulado..min., y = ~Velocidad.de.Infiltración..cm.hr., 
-                  type = 'scatter', mode = 'lines+markers', name = 'Observados', 
-                  marker = list(color = 'blue')) %>%
-        add_trace(data = estimaciones, x = ~Tiempo, y = ~Estimado,
-                  type = 'scatter', mode = 'lines', name = 'Estimados',
-                  line = list(color = 'red')) %>%
-        layout(title = paste("Ajuste del Modelo:", modelo),
-               xaxis = list(title = "Tiempo acumulado (min)"),
-               yaxis = list(title = "Velocidad de Infiltración (cm/hr)"))
-    })
-    
-    # Estimación manual
-    observeEvent(input$tiempoManual, {
-      tiempo_manual <- input$tiempoManual
-      estimacion <- NA
-      
+    output$coeficientes_modelo <- renderPrint({
       if (!is.null(coeficientes)) {
-        if (modelo == "Horton") {
-          a <- coeficientes[1]
-          b <- coeficientes[2]
-          c <- coeficientes[3]
-          estimacion <- a * exp(-b * tiempo_manual) + c
-        } else if (modelo == "Kostiakov") {
-          a <- coeficientes[1]
-          b <- coeficientes[2]
-          estimacion <- a * tiempo_manual^b
-        }
+        print(coeficientes)
       }
-      
-      output$estimacion_manual <- renderPrint({
-        if (!is.na(estimacion)) {
-          paste("Estimación de infiltración para ", tiempo_manual, " min:", round(estimacion, 2), " cm/hr")
-        } else {
-          "No se pudo realizar la estimación."
-        }
-      })
     })
     
-    # Mostrar tabla de observados y estimados
-    output$tabla_observados_estimados <- renderTable({
-      if (nrow(datos) > 0 && !is.null(estimaciones)) {
-        data.frame(
-          "Tiempo acumulado (min)" = datos$Tiempo.acumulado..min.,
-          "Velocidad Observada (cm/hr)" = datos$Velocidad.de.Infiltración..cm.hr.,
-          "Velocidad Estimada (cm/hr)" = estimaciones$Estimado
-        )
+    output$interpretacion_coeficientes <- renderPrint({
+      if (!is.null(interpretaciones)) {
+        paste(interpretaciones, collapse = "\n")
+      }
+    })
+    
+    # Predicción manual basada en el tiempo ingresado
+    observeEvent(input$tiempoManual, {
+      tiempo_ingresado <- input$tiempoManual
+      if (modelo == "Horton" && !is.null(coeficientes)) {
+        estimacion <- coeficientes['a'] * exp(-coeficientes['b'] * tiempo_ingresado) + coeficientes['c']
+        output$estimacion_personalizada <- renderText({
+          paste("Valor estimado (Horton) para", tiempo_ingresado, "min:", round(estimacion, 2))
+        })
+      } else if (modelo == "Kostiakov" && !is.null(coeficientes)) {
+        estimacion <- coeficientes['a'] * tiempo_ingresado^coeficientes['b']
+        output$estimacion_personalizada <- renderText({
+          paste("Valor estimado (Kostiakov) para", tiempo_ingresado, "min:", round(estimacion, 2))
+        })
       } else {
-        data.frame("No hay datos para mostrar")
+        output$estimacion_personalizada <- renderText({"Modelo no ajustado o coeficientes no disponibles."})
+      }
+    })
+    
+    output$plot_modelo <- renderPlotly({
+      if (!is.null(estimaciones)) {
+        plot_ly(data = estimaciones, x = ~Tiempo, y = ~Estimado, type = 'scatter', mode = 'lines', name = 'Estimado') %>%
+          add_trace(data = datos, x = ~Tiempo.acumulado..min., y = ~Velocidad.de.Infiltración..cm.hr., mode = 'markers', name = 'Observado') %>%
+          layout(title = "Ajuste del Modelo",
+                 xaxis = list(title = "Tiempo acumulado (min)"),
+                 yaxis = list(title = "Velocidad de Infiltración (cm/hr)"))
+      }
+    })
+    
+    output$tabla_observados_estimados <- renderTable({
+      if (!is.null(estimaciones)) {
+        data.frame(Observados = datos$Velocidad.de.Infiltración..cm.hr., Estimados = estimaciones$Estimado)
       }
     })
   })
 }
 
 # Ejecutar la aplicación
-shinyApp(ui = ui, server = server)
+shinyApp(ui, server)
 
                  
                  
